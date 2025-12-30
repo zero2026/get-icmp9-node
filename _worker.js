@@ -1,9 +1,33 @@
+/**
+ * Unicode-safe Base64（修复 1101 核心）
+ */
+function base64Encode(str) {
+  return btoa(
+    String.fromCharCode(
+      ...new TextEncoder().encode(str)
+    )
+  );
+}
+
+/**
+ * UA 伪装（避免 CF 风控 / 客户端订阅被拦）
+ */
+function getFakeUA(request) {
+  const ua = request.headers.get("User-Agent") || "";
+  if (ua.includes("clash") || ua.includes("Clash")) return ua;
+  if (ua.includes("v2ray") || ua.includes("V2Ray")) return ua;
+  if (ua.includes("nekobox") || ua.includes("Neko")) return ua;
+
+  // 默认伪装成 Chrome
+  return "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36";
+}
+
 export default {
   async fetch(request, env, ctx) {
     const url = new URL(request.url);
     const params = url.searchParams;
 
-    // 没有 uuid，返回前端页面
+    /* ================= 无 UUID：前端页面 ================= */
     if (!params.has("uuid")) {
       return new Response(getHTML(url.origin), {
         headers: {
@@ -12,48 +36,50 @@ export default {
       });
     }
 
+    const uuid = params.get("uuid");
     const server = params.get("server") || "tunnel.icmp9.com";
     const port = parseInt(params.get("port") || "443", 10);
-    const uuid = params.get("uuid");
     const servername = params.get("servername") || server;
     const tls = (params.get("tls") || "true") === "true";
 
-    // 默认格式：v2ray
+    // 默认 v2ray
     const format = (params.get("format") || "v2ray").toLowerCase();
 
-    // 获取 API 数据
+    /* ================= 获取 API 数据（带 UA 伪装） ================= */
     let apiData = null;
     try {
       const apiResp = await fetch("https://api.icmp9.com/online.php", {
-        cf: { cacheTtl: 60, cacheEverything: true },
+        headers: {
+          "User-Agent": getFakeUA(request),
+          "Accept": "application/json",
+        },
+        cf: {
+          cacheTtl: 60,
+          cacheEverything: true,
+        },
       });
       apiData = await apiResp.json();
     } catch (e) {
       apiData = null;
     }
 
-    /* ===================== Clash YAML（需要 format=clash） ===================== */
+    /* ===================== Clash YAML（显式指定） ===================== */
     if (format === "clash") {
       const proxies = [];
       const proxyNames = ["DIRECT"];
 
-      if (apiData && apiData.success && Array.isArray(apiData.countries)) {
-        for (const country of apiData.countries) {
-          const code = (country.code || "").toUpperCase();
-          const name = `${country.emoji} ${code} | ${country.name}`;
-          const path = `/${country.code}`;
+      if (apiData?.success && Array.isArray(apiData.countries)) {
+        for (const c of apiData.countries) {
+          const name = `${c.emoji} ${c.code.toUpperCase()} | ${c.name}`;
+          const path = `/${c.code}`;
 
           proxies.push({
             name,
-            type: "vmess",
             server,
             port,
             uuid,
-            alterId: 0,
-            cipher: "auto",
             tls,
             servername,
-            network: "ws",
             path,
           });
 
@@ -70,13 +96,13 @@ export default {
       yaml += "proxies:\n";
       for (const p of proxies) {
         yaml += `  - name: '${p.name}'\n`;
-        yaml += `    type: ${p.type}\n`;
+        yaml += `    type: vmess\n`;
         yaml += `    server: '${p.server}'\n`;
         yaml += `    port: ${p.port}\n`;
         yaml += `    uuid: ${p.uuid}\n`;
         yaml += `    alterId: 0\n`;
         yaml += `    cipher: auto\n`;
-        yaml += `    tls: ${p.tls ? "true" : "false"}\n`;
+        yaml += `    tls: ${p.tls}\n`;
         yaml += `    servername: '${p.servername}'\n`;
         yaml += `    network: ws\n`;
         yaml += `    ws-opts:\n`;
@@ -89,8 +115,8 @@ export default {
       yaml += "  - name: '🚀 节点选择'\n";
       yaml += "    type: select\n";
       yaml += "    proxies:\n";
-      for (const name of proxyNames) {
-        yaml += `      - '${name}'\n`;
+      for (const n of proxyNames) {
+        yaml += `      - '${n}'\n`;
       }
 
       yaml += "\nrules:\n";
@@ -104,17 +130,13 @@ export default {
     }
 
     /* ===================== 默认：V2Ray vmess 订阅 ===================== */
+    const vmessList = [];
 
-    const vmessLinks = [];
-
-    if (apiData && apiData.success && Array.isArray(apiData.countries)) {
-      for (const country of apiData.countries) {
-        const name = `${country.emoji} ${country.code.toUpperCase()} | ${country.name}`;
-        const path = `/${country.code}`;
-
-        const vmessObj = {
+    if (apiData?.success && Array.isArray(apiData.countries)) {
+      for (const c of apiData.countries) {
+        const vmess = {
           v: "2",
-          ps: name,
+          ps: `${c.emoji} ${c.code.toUpperCase()} | ${c.name}`,
           add: server,
           port: String(port),
           id: uuid,
@@ -122,22 +144,23 @@ export default {
           net: "ws",
           type: "none",
           host: servername,
-          path,
+          path: `/${c.code}`,
           tls: tls ? "tls" : ""
         };
 
-        vmessLinks.push(
-          "vmess://" + btoa(JSON.stringify(vmessObj))
+        vmessList.push(
+          "vmess://" + base64Encode(JSON.stringify(vmess))
         );
       }
     }
 
-    // v2ray 订阅需要整体 Base64
-    const body = btoa(vmessLinks.join("\n"));
+    // 整体 Base64（v2ray 标准）
+    const body = base64Encode(vmessList.join("\n"));
 
     return new Response(body, {
       headers: {
         "Content-Type": "text/plain; charset=utf-8",
+        "Cache-Control": "no-store",
       },
     });
   },
