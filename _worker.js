@@ -195,29 +195,20 @@ function getHTML(origin) {
 <head>
 <meta charset="UTF-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1" />
-<title>ICMP9 Clash订阅生成器</title>
+<title>ICMP9 订阅生成器</title>
 
 <style>
 /* =====================
    主题变量
 ===================== */
 :root {
-  /* 背景 */
   --bg: radial-gradient(1200px 600px at 10% -10%, #0f172a 0%, #020617 70%);
   --card: rgba(10, 15, 35, 0.88);
-
-  /* 文本 */
   --text: #e5e7eb;
   --sub: #94a3b8;
-
-  /* 边框 & 高亮 */
   --border: rgba(99,102,241,.28);
   --focus: rgba(99,102,241,.45);
-
-  /* 主色 */
   --primary: linear-gradient(135deg, #38bdf8, #6366f1);
-
-  /* 阴影 */
   --shadow-card: 0 30px 60px rgba(0,0,0,.55);
   --shadow-btn: 0 14px 40px rgba(99,102,241,.5);
 }
@@ -225,22 +216,15 @@ function getHTML(origin) {
 [data-theme="light"] {
   --bg: radial-gradient(1200px 600px at 10% -10%, #e0e7ff 0%, #f8fafc 65%);
   --card: rgba(255,255,255,.95);
-
   --text: #0f172a;
   --sub: #475569;
-
   --border: rgba(99,102,241,.25);
   --focus: rgba(79,70,229,.35);
-
   --primary: linear-gradient(135deg, #2563eb, #4f46e5);
-
   --shadow-card: 0 30px 60px rgba(0,0,0,.18);
   --shadow-btn: 0 14px 40px rgba(79,70,229,.4);
 }
 
-/* =====================
-   基础样式
-===================== */
 * {
   box-sizing: border-box;
   transition: background .25s, color .25s, border .25s, box-shadow .25s;
@@ -255,9 +239,6 @@ body {
   color: var(--text);
 }
 
-/* =====================
-   卡片
-===================== */
 .card {
   max-width: 520px;
   margin: auto;
@@ -287,9 +268,6 @@ h1 {
   user-select: none;
 }
 
-/* =====================
-   表单
-===================== */
 label {
   display: block;
   margin-top: 16px;
@@ -323,9 +301,6 @@ select:disabled {
   cursor: not-allowed;
 }
 
-/* =====================
-   按钮
-===================== */
 button {
   width: 100%;
   margin-top: 20px;
@@ -356,9 +331,6 @@ button:hover {
   background: rgba(99,102,241,.08);
 }
 
-/* =====================
-   结果
-===================== */
 .result {
   margin-top: 16px;
   padding: 14px;
@@ -387,7 +359,7 @@ button:hover {
 <body>
 <div class="card">
   <div class="header">
-    <h1>🚀 ICMP9 Clash订阅生成器</h1>
+    <h1>🚀 ICMP9 订阅生成器</h1>
     <div class="toggle" id="themeToggle">🌙</div>
   </div>
 
@@ -403,6 +375,15 @@ button:hover {
   <label>Server Name (SNI)</label>
   <input id="servername" value="tunnel.icmp9.com" />
 
+  <label>订阅格式</label>
+  <select id="format">
+    <option value="auto">自动识别（推荐）</option>
+    <option value="v2ray">V2Ray / vmess</option>
+    <option value="clash">Clash</option>
+    <option value="singbox">sing-box</option>
+    <option value="nekobox">Nekobox</option>
+  </select>
+
   <label>TLS（已锁定）</label>
   <select disabled>
     <option>true</option>
@@ -415,20 +396,10 @@ button:hover {
 </div>
 
 <script>
-/* =====================
-   工具
-===================== */
 const $ = id => document.getElementById(id);
-const STORAGE = {
-  UUID: "uuid",
-  THEME: "theme"
-};
-
+const STORAGE = { UUID: "uuid", THEME: "theme", FORMAT: "format" };
 let currentUrl = "";
 
-/* =====================
-   订阅生成
-===================== */
 function gen() {
   const uuid = $('uuid').value.trim();
   if (!uuid) return alert("UUID 不能为空");
@@ -437,7 +408,14 @@ function gen() {
 
   const server = $('server').value;
   const port = $('port').value;
-  const servername = $('servername').value || "tunnel.icmp9.com";
+  const servername = $('servername').value;
+  const format = $('format').value;
+
+  if (format !== "auto") {
+    localStorage.setItem(STORAGE.FORMAT, format);
+  } else {
+    localStorage.removeItem(STORAGE.FORMAT);
+  }
 
   currentUrl =
     location.origin +
@@ -447,22 +425,19 @@ function gen() {
     "&servername=" + encodeURIComponent(servername) +
     "&tls=true";
 
+  if (format !== "auto") {
+    currentUrl += "&format=" + format;
+  }
+
   $('result').innerHTML =
-  '<a href="' + currentUrl + '" target="_blank">' + currentUrl + '</a>';
+    '<a href="' + currentUrl + '" target="_blank">' + currentUrl + '</a>';
 }
 
-/* =====================
-   复制
-===================== */
 function copy() {
   if (!currentUrl) return alert("请先生成订阅链接");
-  navigator.clipboard.writeText(currentUrl)
-    .then(() => alert("已复制到剪贴板"));
+  navigator.clipboard.writeText(currentUrl).then(() => alert("已复制"));
 }
 
-/* =====================
-   主题
-===================== */
 function toggleTheme() {
   const html = document.documentElement;
   const next = html.dataset.theme === "dark" ? "light" : "dark";
@@ -471,15 +446,15 @@ function toggleTheme() {
   $('themeToggle').textContent = next === "dark" ? "🌙" : "☀️";
 }
 
-/* =====================
-   初始化
-===================== */
 $('genBtn').onclick = gen;
 $('copyBtn').onclick = copy;
 $('themeToggle').onclick = toggleTheme;
 
 const savedUUID = localStorage.getItem(STORAGE.UUID);
 if (savedUUID) $('uuid').value = savedUUID;
+
+const savedFormat = localStorage.getItem(STORAGE.FORMAT);
+if (savedFormat) $('format').value = savedFormat;
 
 const theme = localStorage.getItem(STORAGE.THEME) || "dark";
 document.documentElement.dataset.theme = theme;
