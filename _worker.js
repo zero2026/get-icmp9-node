@@ -1,103 +1,188 @@
+/**
+ * Unicode-safe Base64（修复 1101）
+ */
+function base64Encode(str) {
+  return btoa(
+    String.fromCharCode(...new TextEncoder().encode(str))
+  );
+}
+
+/**
+ * 判断订阅格式（UA 自动识别）
+ */
+function detectFormat(request) {
+  const ua = (request.headers.get("User-Agent") || "").toLowerCase();
+
+  if (ua.includes("nekobox") || ua.includes("sing-box")) return "singbox";
+  if (ua.includes("clash")) return "clash";
+  if (
+    ua.includes("v2ray") ||
+    ua.includes("shadowrocket") ||
+    ua.includes("quantumult") ||
+    ua.includes("kitsunebi")
+  ) return "v2ray";
+
+  return "v2ray"; // 兜底
+}
+
+/**
+ * UA 伪装（给 API 用）
+ */
+function getFakeUA(request) {
+  const ua = request.headers.get("User-Agent") || "";
+  if (/clash|v2ray|nekobox|sing-box/i.test(ua)) return ua;
+  return "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36";
+}
+
 export default {
-  async fetch(request, env, ctx) {
+  async fetch(request) {
     const url = new URL(request.url);
     const params = url.searchParams;
 
-    // 如果没有 uuid，当作前端页面请求
+    /* ================= 无 UUID：前端 ================= */
     if (!params.has("uuid")) {
       return new Response(getHTML(url.origin), {
-        headers: {
-          "Content-Type": "text/html; charset=utf-8",
-        },
+        headers: { "Content-Type": "text/html; charset=utf-8" },
       });
     }
 
-    /* ================= 原有功能开始（保持不变） ================= */
-
+    const uuid = params.get("uuid");
     const server = params.get("server") || "tunnel.icmp9.com";
     const port = parseInt(params.get("port") || "443", 10);
-    const uuid = params.get("uuid") || "";
     const servername = params.get("servername") || server;
     const tls = (params.get("tls") || "true") === "true";
 
-    // 获取 API 数据
+    // 👇 UA 自动判断格式（format 参数仍可手动覆盖）
+    const format =
+      (params.get("format") || detectFormat(request)).toLowerCase();
+
+    /* ================= 获取 API ================= */
     let apiData = null;
     try {
-      const apiResp = await fetch("https://api.icmp9.com/online.php", {
+      const resp = await fetch("https://api.icmp9.com/online.php", {
+        headers: { "User-Agent": getFakeUA(request) },
         cf: { cacheTtl: 60, cacheEverything: true },
       });
-      apiData = await apiResp.json();
-    } catch (e) {
+      apiData = await resp.json();
+    } catch {
       apiData = null;
     }
 
-    const proxies = [];
-    const proxyNames = ["DIRECT"];
+    /* ================= sing-box / nekobox ================= */
+    if (format === "singbox" || format === "nekobox") {
+      const outbounds = [];
+      const tags = [];
 
-    if (apiData && apiData.success && Array.isArray(apiData.countries)) {
-      for (const country of apiData.countries) {
-        const code = (country.code || "").toUpperCase();
-        const name = `${country.emoji} ${code} | ${country.name}`;
-        const path = `/${country.code}`;
+      if (apiData?.success && Array.isArray(apiData.countries)) {
+        for (const c of apiData.countries) {
+          const tag = `${c.emoji} ${c.code.toUpperCase()} | ${c.name}`;
+          tags.push(tag);
 
-        proxies.push({
-          name,
-          type: "vmess",
-          server,
-          port,
-          uuid,
-          alterId: 0,
-          cipher: "auto",
-          tls,
-          servername,
-          network: "ws",
-          path,
-        });
+          outbounds.push({
+            type: "vmess",
+            tag,
+            server,
+            server_port: port,
+            uuid,
+            security: "auto",
+            alter_id: 0,
+            tls: {
+              enabled: tls,
+              server_name: servername,
+            },
+            transport: {
+              type: "ws",
+              path: `/${c.code}`,
+              headers: { Host: servername },
+            },
+          });
+        }
+      }
 
-        proxyNames.push(name);
+      return new Response(
+        JSON.stringify({
+          log: { level: "info" },
+          inbounds: [],
+          outbounds: [
+            { type: "selector", tag: "🚀 节点选择", outbounds: tags },
+            ...outbounds,
+            { type: "direct", tag: "direct" },
+            { type: "block", tag: "block" },
+          ],
+          route: { final: "🚀 节点选择" },
+        }, null, 2),
+        { headers: { "Content-Type": "application/json; charset=utf-8" } }
+      );
+    }
+
+    /* ================= Clash ================= */
+    if (format === "clash") {
+      let yaml = "";
+      const names = ["DIRECT"];
+
+      yaml += "mixed-port: 7890\nallow-lan: true\nmode: rule\nlog-level: info\n\nproxies:\n";
+
+      if (apiData?.success && Array.isArray(apiData.countries)) {
+        for (const c of apiData.countries) {
+          const name = `${c.emoji} ${c.code.toUpperCase()} | ${c.name}`;
+          names.push(name);
+
+          yaml +=
+`  - name: '${name}'
+    type: vmess
+    server: '${server}'
+    port: ${port}
+    uuid: ${uuid}
+    alterId: 0
+    cipher: auto
+    tls: ${tls}
+    servername: '${servername}'
+    network: ws
+    ws-opts:
+      path: '/${c.code}'
+      headers:
+        Host: '${servername}'
+`;
+        }
+      }
+
+      yaml += "\nproxy-groups:\n  - name: '🚀 节点选择'\n    type: select\n    proxies:\n";
+      for (const n of names) yaml += `      - '${n}'\n`;
+      yaml += "\nrules:\n  - MATCH, 🚀 节点选择\n";
+
+      return new Response(yaml, {
+        headers: { "Content-Type": "text/yaml; charset=utf-8" },
+      });
+    }
+
+    /* ================= 默认 v2ray ================= */
+    const list = [];
+
+    if (apiData?.success && Array.isArray(apiData.countries)) {
+      for (const c of apiData.countries) {
+        list.push(
+          "vmess://" +
+            base64Encode(
+              JSON.stringify({
+                v: "2",
+                ps: `${c.emoji} ${c.code.toUpperCase()} | ${c.name}`,
+                add: server,
+                port: String(port),
+                id: uuid,
+                aid: "0",
+                net: "ws",
+                type: "none",
+                host: servername,
+                path: `/${c.code}`,
+                tls: tls ? "tls" : "",
+              })
+            )
+        );
       }
     }
 
-    // 生成 YAML
-    let yaml = "";
-    yaml += "mixed-port: 7890\n";
-    yaml += "allow-lan: true\n";
-    yaml += "mode: rule\n";
-    yaml += "log-level: info\n\n";
-
-    yaml += "proxies:\n";
-    for (const p of proxies) {
-      yaml += `  - name: '${p.name}'\n`;
-      yaml += `    type: ${p.type}\n`;
-      yaml += `    server: '${p.server}'\n`;
-      yaml += `    port: ${p.port}\n`;
-      yaml += `    uuid: ${p.uuid}\n`;
-      yaml += `    alterId: 0\n`;
-      yaml += `    cipher: auto\n`;
-      yaml += `    tls: ${p.tls ? "true" : "false"}\n`;
-      yaml += `    servername: '${p.servername}'\n`;
-      yaml += `    network: ws\n`;
-      yaml += `    ws-opts:\n`;
-      yaml += `      path: '${p.path}'\n`;
-      yaml += `      headers:\n`;
-      yaml += `        Host: '${p.servername}'\n`;
-    }
-
-    yaml += "\nproxy-groups:\n";
-    yaml += "  - name: '🚀 节点选择'\n";
-    yaml += "    type: select\n";
-    yaml += "    proxies:\n";
-    for (const name of proxyNames) {
-      yaml += `      - '${name}'\n`;
-    }
-
-    yaml += "\nrules:\n";
-    yaml += "  - MATCH, 🚀 节点选择\n";
-
-    return new Response(yaml, {
-      headers: {
-        "Content-Type": "text/yaml; charset=utf-8",
-      },
+    return new Response(base64Encode(list.join("\n")), {
+      headers: { "Content-Type": "text/plain; charset=utf-8" },
     });
   },
 };
@@ -110,29 +195,17 @@ function getHTML(origin) {
 <head>
 <meta charset="UTF-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1" />
-<title>ICMP9 Clash订阅生成器</title>
+<title>ICMP9 订阅生成器</title>
 
 <style>
-/* =====================
-   主题变量
-===================== */
 :root {
-  /* 背景 */
   --bg: radial-gradient(1200px 600px at 10% -10%, #0f172a 0%, #020617 70%);
   --card: rgba(10, 15, 35, 0.88);
-
-  /* 文本 */
   --text: #e5e7eb;
   --sub: #94a3b8;
-
-  /* 边框 & 高亮 */
   --border: rgba(99,102,241,.28);
   --focus: rgba(99,102,241,.45);
-
-  /* 主色 */
   --primary: linear-gradient(135deg, #38bdf8, #6366f1);
-
-  /* 阴影 */
   --shadow-card: 0 30px 60px rgba(0,0,0,.55);
   --shadow-btn: 0 14px 40px rgba(99,102,241,.5);
 }
@@ -140,22 +213,15 @@ function getHTML(origin) {
 [data-theme="light"] {
   --bg: radial-gradient(1200px 600px at 10% -10%, #e0e7ff 0%, #f8fafc 65%);
   --card: rgba(255,255,255,.95);
-
   --text: #0f172a;
   --sub: #475569;
-
   --border: rgba(99,102,241,.25);
   --focus: rgba(79,70,229,.35);
-
   --primary: linear-gradient(135deg, #2563eb, #4f46e5);
-
   --shadow-card: 0 30px 60px rgba(0,0,0,.18);
   --shadow-btn: 0 14px 40px rgba(79,70,229,.4);
 }
 
-/* =====================
-   基础样式
-===================== */
 * {
   box-sizing: border-box;
   transition: background .25s, color .25s, border .25s, box-shadow .25s;
@@ -170,9 +236,6 @@ body {
   color: var(--text);
 }
 
-/* =====================
-   卡片
-===================== */
 .card {
   max-width: 520px;
   margin: auto;
@@ -193,18 +256,14 @@ body {
 h1 {
   font-size: 18px;
   margin: 0;
-  letter-spacing: .4px;
 }
 
 .toggle {
   font-size: 22px;
   cursor: pointer;
-  user-select: none;
 }
 
-/* =====================
-   表单
-===================== */
+/* 表单 */
 label {
   display: block;
   margin-top: 16px;
@@ -222,10 +281,19 @@ input, select {
   border-radius: 14px;
   border: 1px solid var(--border);
   outline: none;
+  appearance: none;
 }
 
-input::placeholder {
-  color: #64748b;
+select {
+  background-image:
+    linear-gradient(45deg, transparent 50%, #94a3b8 50%),
+    linear-gradient(135deg, #94a3b8 50%, transparent 50%);
+  background-position:
+    calc(100% - 18px) calc(50% - 3px),
+    calc(100% - 12px) calc(50% - 3px);
+  background-size: 6px 6px, 6px 6px;
+  background-repeat: no-repeat;
+  cursor: pointer;
 }
 
 input:focus, select:focus {
@@ -233,14 +301,7 @@ input:focus, select:focus {
   box-shadow: 0 0 0 3px rgba(99,102,241,.2);
 }
 
-select:disabled {
-  opacity: .75;
-  cursor: not-allowed;
-}
-
-/* =====================
-   按钮
-===================== */
+/* 按钮 */
 button {
   width: 100%;
   margin-top: 20px;
@@ -271,9 +332,7 @@ button:hover {
   background: rgba(99,102,241,.08);
 }
 
-/* =====================
-   结果
-===================== */
+/* 结果 */
 .result {
   margin-top: 16px;
   padding: 14px;
@@ -284,13 +343,26 @@ button:hover {
   word-break: break-all;
 }
 
-.result a {
-  color: #60a5fa;
-  text-decoration: none;
+/* Toast */
+.toast {
+  position: fixed;
+  bottom: 24px;
+  left: 50%;
+  transform: translateX(-50%) translateY(20px);
+  padding: 12px 18px;
+  background: rgba(15,23,42,.9);
+  color: #e5e7eb;
+  border-radius: 14px;
+  font-size: 14px;
+  opacity: 0;
+  pointer-events: none;
+  transition: all .3s ease;
+  box-shadow: 0 10px 30px rgba(0,0,0,.4);
 }
 
-.result a:hover {
-  text-decoration: underline;
+.toast.show {
+  opacity: 1;
+  transform: translateX(-50%) translateY(0);
 }
 
 @media (max-width: 480px) {
@@ -302,12 +374,12 @@ button:hover {
 <body>
 <div class="card">
   <div class="header">
-    <h1>🚀 ICMP9 Clash订阅生成器</h1>
+    <h1>🚀 ICMP9 订阅生成器</h1>
     <div class="toggle" id="themeToggle">🌙</div>
   </div>
 
-  <label>UUID（自动保存）</label>
-  <input id="uuid" placeholder="xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx" />
+  <label>UUID（ICMP9 API Key）</label>
+  <input id="uuid" placeholder="必需" />
 
   <label>Server</label>
   <input id="server" value="tunnel.icmp9.com" />
@@ -318,10 +390,17 @@ button:hover {
   <label>Server Name (SNI)</label>
   <input id="servername" value="tunnel.icmp9.com" />
 
-  <label>TLS（已锁定）</label>
-  <select disabled>
-    <option>true</option>
+  <label>订阅格式</label>
+  <select id="format">
+    <option value="auto">自适应订阅（推荐）</option>
+    <option value="v2ray">V2Ray</option>
+    <option value="clash">Clash</option>
+    <option value="singbox">sing-box</option>
+    <option value="nekobox">Nekobox</option>
   </select>
+
+  <label>TLS（已锁定）</label>
+  <select disabled><option>true</option></select>
 
   <button id="genBtn">生成订阅链接</button>
   <button class="copy" id="copyBtn">📋 复制订阅链接</button>
@@ -329,30 +408,33 @@ button:hover {
   <div class="result" id="result"></div>
 </div>
 
-<script>
-/* =====================
-   工具
-===================== */
-const $ = id => document.getElementById(id);
-const STORAGE = {
-  UUID: "uuid",
-  THEME: "theme"
-};
+<div class="toast" id="toast">提示</div>
 
+<script>
+const $ = id => document.getElementById(id);
+const STORAGE = { UUID: "uuid", THEME: "theme", FORMAT: "format" };
 let currentUrl = "";
 
-/* =====================
-   订阅生成
-===================== */
+function showToast(text) {
+  const toast = $('toast');
+  toast.textContent = text;
+  toast.classList.add('show');
+  setTimeout(() => toast.classList.remove('show'), 2000);
+}
+
 function gen() {
   const uuid = $('uuid').value.trim();
-  if (!uuid) return alert("UUID 不能为空");
+  if (!uuid) return showToast("UUID 不能为空");
 
   localStorage.setItem(STORAGE.UUID, uuid);
 
   const server = $('server').value;
   const port = $('port').value;
-  const servername = $('servername').value || "tunnel.icmp9.com";
+  const servername = $('servername').value;
+  const format = $('format').value;
+
+  if (format !== "auto") localStorage.setItem(STORAGE.FORMAT, format);
+  else localStorage.removeItem(STORAGE.FORMAT);
 
   currentUrl =
     location.origin +
@@ -362,22 +444,21 @@ function gen() {
     "&servername=" + encodeURIComponent(servername) +
     "&tls=true";
 
+  if (format !== "auto") currentUrl += "&format=" + format;
+
   $('result').innerHTML =
-  '<a href="' + currentUrl + '" target="_blank">' + currentUrl + '</a>';
+    '<a href="' + currentUrl + '" target="_blank">' + currentUrl + '</a>';
+
+  // ✅ 新增：生成成功提示
+  showToast("订阅链接已生成");
 }
 
-/* =====================
-   复制
-===================== */
 function copy() {
-  if (!currentUrl) return alert("请先生成订阅链接");
+  if (!currentUrl) return showToast("请先生成订阅链接");
   navigator.clipboard.writeText(currentUrl)
-    .then(() => alert("已复制到剪贴板"));
+    .then(() => showToast("订阅链接已复制"));
 }
 
-/* =====================
-   主题
-===================== */
 function toggleTheme() {
   const html = document.documentElement;
   const next = html.dataset.theme === "dark" ? "light" : "dark";
@@ -386,15 +467,15 @@ function toggleTheme() {
   $('themeToggle').textContent = next === "dark" ? "🌙" : "☀️";
 }
 
-/* =====================
-   初始化
-===================== */
 $('genBtn').onclick = gen;
 $('copyBtn').onclick = copy;
 $('themeToggle').onclick = toggleTheme;
 
 const savedUUID = localStorage.getItem(STORAGE.UUID);
 if (savedUUID) $('uuid').value = savedUUID;
+
+const savedFormat = localStorage.getItem(STORAGE.FORMAT);
+if (savedFormat) $('format').value = savedFormat;
 
 const theme = localStorage.getItem(STORAGE.THEME) || "dark";
 document.documentElement.dataset.theme = theme;
