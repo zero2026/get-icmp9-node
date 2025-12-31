@@ -170,11 +170,15 @@ export default {
                 port: String(port),
                 id: uuid,
                 aid: "0",
+                scy: "auto",
                 net: "ws",
                 type: "none",
                 host: servername,
                 path: `/${c.code}`,
                 tls: tls ? "tls" : "",
+                sni: servername,
+                alpn: "",
+                fp: "",
               })
             )
         );
