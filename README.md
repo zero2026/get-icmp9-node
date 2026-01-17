@@ -50,7 +50,7 @@ Nginx反代实例：
 server {
     listen 8080;
     listen [::]:8080;
-    server_name www.example.com;#换成反代tunnel.icmp9.com的域名
+    server_name www.example.com;#换成反代tunnel-na.8443.buzz的域名
 
     resolver 8.8.8.8 1.1.1.1 valid=300s;
     client_max_body_size 1G;
@@ -58,10 +58,10 @@ server {
     proxy_buffering off;
 
     location / {
-        proxy_pass https://tunnel.icmp9.com;
+        proxy_pass https://tunnel-na.8443.buzz;
         proxy_ssl_server_name on;
 
-        proxy_set_header Host tunnel.icmp9.com;
+        proxy_set_header Host tunnel-na.8443.buzz;
 
         proxy_set_header X-Real-IP "";
         proxy_set_header X-Forwarded-For "";
@@ -104,10 +104,10 @@ server {
     proxy_buffering off;
 
     location / {
-        proxy_pass https://tunnel.icmp9.com;
+        proxy_pass https://tunnel-na.8443.buzz;
         proxy_ssl_server_name on;
 
-        proxy_set_header Host tunnel.icmp9.com;
+        proxy_set_header Host tunnel-na.8443.buzz;
 
         proxy_set_header X-Real-IP "";
         proxy_set_header X-Forwarded-For "";
