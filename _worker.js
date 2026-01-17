@@ -47,7 +47,7 @@ export default {
     }
 
     const uuid = params.get("uuid");
-    const server = params.get("server") || "tunnel.icmp9.com";
+    const server = params.get("server") || "tunnel-na.8443.buzz";
     const port = parseInt(params.get("port") || "443", 10);
     const servername = params.get("servername") || server;
     const tls = (params.get("tls") || "true") === "true";
@@ -418,13 +418,13 @@ footer a:hover {
       <input id="uuid" placeholder="必需" />
 
       <label>Server</label>
-      <input id="server" value="tunnel.icmp9.com" />
+      <input id="server" value="tunnel-na.8443.buzz" />
 
       <label>Port</label>
       <input id="port" value="443" />
 
       <label>Server Name (SNI)</label>
-      <input id="servername" value="tunnel.icmp9.com" />
+      <input id="servername" value="tunnel-na.8443.buzz" />
 
       <label>订阅格式</label>
       <select id="format">
