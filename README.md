@@ -60,6 +60,8 @@ server {
     location / {
         proxy_pass https://tunnel-na.8443.buzz;
         proxy_ssl_server_name on;
+        proxy_ssl_name tunnel-na.8443.buzz;
+        proxy_ssl_protocols TLSv1.2 TLSv1.3;
 
         proxy_set_header Host tunnel-na.8443.buzz;
 
@@ -106,6 +108,8 @@ server {
     location / {
         proxy_pass https://tunnel-na.8443.buzz;
         proxy_ssl_server_name on;
+        proxy_ssl_name tunnel-na.8443.buzz;
+        proxy_ssl_protocols TLSv1.2 TLSv1.3;
 
         proxy_set_header Host tunnel-na.8443.buzz;
 
