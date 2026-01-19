@@ -1,3 +1,7 @@
+# ⛔⛔⛔账号被封，不玩了
+
+---
+
 # ICMP9 订阅生成器
 `get-icmp9-node`是一个基于 Cloudflare Workers 构建的轻量级ICMP9订阅生成服务，支持 V2Ray / Clash / sing-box / Nekobox 等主流客户端，提供一条链接，多端自适应的订阅体验。
 
